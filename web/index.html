@@ -9,7 +9,7 @@
         margin: 0;
         background-color: #0a0a0a;
         display: flex;
-        flex-direction: column;
+        justify-content: center;
         align-items: center;
         min-height: 100vh;
         overflow: hidden;
@@ -20,56 +20,25 @@
         line-height: 1.1;
         margin: 0px;
       }
-      .download-bar {
-        width: 100%;
-        background: #1a1a2e;
-        padding: 8px 16px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 12px;
-        color: #888;
-        box-sizing: border-box;
+      .dl {
+        position: fixed;
+        bottom: 8px;
+        right: 12px;
+        font-family: monospace;
+        font-size: 11px;
         z-index: 10;
       }
-      .download-bar a {
-        color: #26d826;
+      .dl a {
+        color: #555;
         text-decoration: none;
-        border: 1px solid #26d826;
-        padding: 4px 12px;
-        border-radius: 3px;
-        transition: all 0.2s;
       }
-      .download-bar a:hover {
-        background: #26d826;
-        color: #0a0a0a;
-      }
-      .download-bar .links {
-        display: flex;
-        gap: 12px;
-        align-items: center;
-      }
-      .download-bar .links a.secondary {
-        color: #888;
-        border-color: #444;
-      }
-      .download-bar .links a.secondary:hover {
-        color: #fff;
-        border-color: #888;
-        background: transparent;
+      .dl a:hover {
+        color: #26d826;
       }
     </style>
 </head>
 <body>
-    <div class="download-bar">
-      <span>NASH Portal — $NASH on Solana via pump.fun</span>
-      <div class="links">
-        <a href="https://pump.fun/coin/4DQsMSkeKc3Mcij1BE4Z8oqU3QeV45QQ3Psn3CNDpump" class="secondary" target="_blank">pump.fun</a>
-        <a href="https://dexscreener.com/solana/4DQsMSkeKc3Mcij1BE4Z8oqU3QeV45QQ3Psn3CNDpump" class="secondary" target="_blank">chart</a>
-        <a href="https://github.com/plurigrid/nash-portal/releases/latest" target="_blank">Download TUI</a>
-      </div>
-    </div>
+    <div class="dl"><a href="https://github.com/plurigrid/nash-portal/releases/latest">download tui</a></div>
     <script type="module">
       window.addEventListener("TrunkApplicationStarted", (_) => {
         console.log("NASH Portal initialized");
