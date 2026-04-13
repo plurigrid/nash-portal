@@ -1,66 +1,107 @@
-name: Build & Deploy to Cloudflare Pages
+name: Build & Deploy
 
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
   deployments: write
 
 jobs:
-  build:
+  build-web:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust + WASM target
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
-
-      - name: Cache cargo
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-
+            web/target
+          key: web-${{ runner.os }}-${{ hashFiles('web/Cargo.lock') }}
       - name: Install trunk
-        run: |
-          curl -sL https://github.com/trunk-rs/trunk/releases/latest/download/trunk-x86_64-unknown-linux-gnu.tar.gz -o /tmp/trunk.tar.gz
-          tar xzf /tmp/trunk.tar.gz -C /tmp
-          sudo mv /tmp/trunk /usr/local/bin/trunk
-          trunk --version
-
-      - name: Build WASM (release)
-        run: trunk build --release
-
-      - name: Upload dist artifact
-        uses: actions/upload-artifact@v4
+        run: curl -sL https://github.com/trunk-rs/trunk/releases/latest/download/trunk-x86_64-unknown-linux-gnu.tar.gz | tar xzf - -C /usr/local/bin
+      - name: Build WASM
+        run: cd web && trunk build --release
+      - uses: actions/upload-artifact@v4
         with:
-          name: nash-web-dist
-          path: dist/
+          name: web-dist
+          path: web/dist/
+
+  build-tui:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            name: nash-macos-arm64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            name: nash-macos-x86_64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: nash-linux-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tui/target
+          key: tui-${{ matrix.target }}-${{ hashFiles('tui/Cargo.lock') }}
+      - name: Build TUI
+        run: cd tui && cargo build --release --target ${{ matrix.target }}
+      - name: Package binary
+        run: |
+          cp tui/target/${{ matrix.target }}/release/nash-portal-tui ${{ matrix.name }}
+          chmod +x ${{ matrix.name }}
+          tar czf ${{ matrix.name }}.tar.gz ${{ matrix.name }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}.tar.gz
 
   deploy:
-    needs: build
+    needs: build-web
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - name: Download dist artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          name: nash-web-dist
+          name: web-dist
           path: dist/
-
-      - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
+      - uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy dist/ --project-name nash-portal --branch main
+
+  release:
+    needs: [build-web, build-tui]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create ${{ github.ref_name }} \
+            --repo ${{ github.repository }} \
+            --title "nash-portal ${{ github.ref_name }}" \
+            --generate-notes \
+            nash-macos-arm64/nash-macos-arm64.tar.gz \
+            nash-macos-x86_64/nash-macos-x86_64.tar.gz \
+            nash-linux-x86_64/nash-linux-x86_64.tar.gz
