@@ -35,10 +35,31 @@
       .dl a:hover {
         color: #26d826;
       }
-    </style>
+    .ape {
+position: fixed;
+bottom: 8px;
+left: 12px;
+font-family: monospace;
+font-size: 11px;
+z-index: 10;
+}
+.ape a {
+color: #1a1a1a;
+background: #26d826;
+text-decoration: none;
+padding: 3px 8px;
+border-radius: 3px;
+font-weight: bold;
+}
+.ape a:hover {
+background: #33ff33;
+color: #000;
+}
+</style>
 </head>
 <body>
-    <div class="dl"><a href="https://github.com/plurigrid/nash-portal/releases/latest">download tui</a></div>
+    <div class="ape"><a href="https://pump.fun/coin/4DQsMSkeKc3Mcij1BE4Z8oqU3QeV45QQ3Psn3CNDpump" target="_blank" rel="noopener">🦍 ape in</a></div>
+<div class="dl"><a href="https://github.com/plurigrid/nash-portal/releases/latest">download tui</a></div>
     <script type="module">
       window.addEventListener("TrunkApplicationStarted", (_) => {
         console.log("NASH Portal initialized");
