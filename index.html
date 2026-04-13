@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <link data-trunk rel="rust"/>
+    <title>NASH TUI</title>
+    <style>
+      body {
+        margin: 0;
+        background-color: #0a0a0a;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        overflow: hidden;
+      }
+      pre {
+        font-family: 'JetBrains Mono', 'Fira Code', 'Menlo', monospace;
+        font-size: 14px;
+        line-height: 1.1;
+        margin: 0px;
+      }
+    </style>
+</head>
+<body>
+    <script type="module">
+      window.addEventListener("TrunkApplicationStarted", (_) => {
+        console.log("NASH TUI initialized");
+      });
+    </script>
+</body>
+</html>
