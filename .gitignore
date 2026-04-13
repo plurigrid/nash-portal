@@ -1,3 +1,6 @@
 target/
 dist/
-dist/
+web/target/
+web/dist/
+tui/target/
+*.wasm

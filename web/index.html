@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8"/>
     <link data-trunk rel="rust"/>
-    <title>NASH TUI</title>
+    <title>NASH Portal</title>
     <style>
       body {
         margin: 0;
@@ -20,12 +20,28 @@
         line-height: 1.1;
         margin: 0px;
       }
+      .dl {
+        position: fixed;
+        bottom: 8px;
+        right: 12px;
+        font-family: monospace;
+        font-size: 11px;
+        z-index: 10;
+      }
+      .dl a {
+        color: #555;
+        text-decoration: none;
+      }
+      .dl a:hover {
+        color: #26d826;
+      }
     </style>
 </head>
 <body>
+    <div class="dl"><a href="https://github.com/plurigrid/nash-portal/releases/latest">download tui</a></div>
     <script type="module">
       window.addEventListener("TrunkApplicationStarted", (_) => {
-        console.log("NASH TUI initialized");
+        console.log("NASH Portal initialized");
       });
     </script>
 </body>
