@@ -24,7 +24,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            web/target
+            target
           key: web-${{ runner.os }}-${{ hashFiles('web/Cargo.lock') }}
       - name: Install trunk
         run: curl -sL https://github.com/trunk-rs/trunk/releases/latest/download/trunk-x86_64-unknown-linux-gnu.tar.gz | tar xzf - -C /usr/local/bin
@@ -59,13 +59,13 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            tui/target
+            target
           key: tui-${{ matrix.target }}-${{ hashFiles('tui/Cargo.lock') }}
       - name: Build TUI
-        run: cd tui && cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }} -p nash-portal-tui
       - name: Package binary
         run: |
-          cp tui/target/${{ matrix.target }}/release/nash-portal-tui ${{ matrix.name }}
+          cp target/${{ matrix.target }}/release/nash-portal-tui ${{ matrix.name }}
           chmod +x ${{ matrix.name }}
           tar czf ${{ matrix.name }}.tar.gz ${{ matrix.name }}
       - uses: actions/upload-artifact@v4
