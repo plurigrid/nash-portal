@@ -1,3 +1,17 @@
+[package]
+name = "defector-scanner"
+version = "0.1.0"
+edition = "2021"
+
 [workspace]
-members = ["web", "tui"]
-resolver = "2"
+members = ["tui", "web"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.0", features = ["full"] }
+edn-rs = "0.17"
+chrono = { version = "0.4", features = ["serde"] }
+
+[lib]
+name = "defector_scanner"
+path = "src/lib.rs"
