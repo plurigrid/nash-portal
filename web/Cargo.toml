@@ -8,6 +8,7 @@ ratzilla = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 gloo-net = { version = "0.6", features = ["http"] }
-gloo-timers = "0.3"
+gloo-timers = { version = "0.3", features = ["futures"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
