@@ -1,3 +1,5 @@
+mod game;
+
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
     execute,
@@ -72,9 +74,10 @@ impl App {
     }
 }
 
-async fn fetch_price() -> Result<TokenData, Box<dyn std::error::Error + Send + Sync>> {
-    let v: serde_json::Value = reqwest::get(&format!("https://api.dexscreener.com/latest/dex/tokens/{}", NASH)).await?.json().await?;
+fn parse_dexscreener(v: &serde_json::Value) -> Result<TokenData, &'static str> {
     let p = v["pairs"].as_array().and_then(|a| a.first()).ok_or("no pairs")?;
+    let buys = p["txns"]["h24"]["buys"].as_u64().unwrap_or(0);
+    let sells = p["txns"]["h24"]["sells"].as_u64().unwrap_or(0);
     Ok(TokenData {
         price_usd: p["priceUsd"].as_str().unwrap_or("0").parse().unwrap_or(0.0),
         price_sol: p["priceNative"].as_str().unwrap_or("0").parse().unwrap_or(0.0),
@@ -84,17 +87,19 @@ async fn fetch_price() -> Result<TokenData, Box<dyn std::error::Error + Send + S
         change_5m: p["priceChange"]["m5"].as_f64().unwrap_or(0.0),
         change_1h: p["priceChange"]["h1"].as_f64().unwrap_or(0.0),
         change_24h: p["priceChange"]["h24"].as_f64().unwrap_or(0.0),
-        buys_24h: p["txns"]["h24"]["buys"].as_u64().unwrap_or(0),
-        sells_24h: p["txns"]["h24"]["sells"].as_u64().unwrap_or(0),
+        buys_24h: buys,
+        sells_24h: sells,
         liquidity: p["liquidity"]["usd"].as_f64().unwrap_or(0.0),
-        txns: p["txns"]["h24"]["buys"].as_u64().unwrap_or(0) + p["txns"]["h24"]["sells"].as_u64().unwrap_or(0),
+        txns: buys + sells,
     })
 }
 
-async fn fetch_candles(tf: Timeframe) -> Result<Vec<Candle>, Box<dyn std::error::Error + Send + Sync>> {
-    let (period, agg, limit) = tf.api_params();
-    let url = format!("https://api.geckoterminal.com/api/v2/networks/solana/pools/{}/ohlcv/{}?aggregate={}&limit={}&currency=usd", POOL, period, agg, limit);
-    let v: serde_json::Value = reqwest::get(&url).await?.json().await?;
+fn parse_jupiter_price(v: &serde_json::Value, mint: &str) -> Result<f64, &'static str> {
+    let s = v["data"][mint]["price"].as_str().ok_or("no jupiter price")?;
+    s.parse().map_err(|_| "jupiter parse")
+}
+
+fn parse_geckoterminal(v: &serde_json::Value) -> Result<Vec<Candle>, &'static str> {
     let list = v["data"]["attributes"]["ohlcv_list"].as_array().ok_or("no ohlcv")?;
     let mut candles: Vec<Candle> = list.iter().filter_map(|c| {
         let a = c.as_array()?;
@@ -105,9 +110,41 @@ async fn fetch_candles(tf: Timeframe) -> Result<Vec<Candle>, Box<dyn std::error:
             v: a.get(5)?.as_f64().unwrap_or(0.0),
         })
     }).collect();
-    candles.reverse(); // oldest first
+    candles.reverse();
     Ok(candles)
 }
+
+async fn fetch_dexscreener() -> Result<TokenData, Box<dyn std::error::Error + Send + Sync>> {
+    let v: serde_json::Value = reqwest::get(&format!("https://api.dexscreener.com/latest/dex/tokens/{}", NASH)).await?.json().await?;
+    parse_dexscreener(&v).map_err(|e| e.into())
+}
+
+async fn fetch_jupiter_price() -> Result<f64, Box<dyn std::error::Error + Send + Sync>> {
+    let v: serde_json::Value = reqwest::get(&format!("https://api.jup.ag/price/v2?ids={}", NASH)).await?.json().await?;
+    parse_jupiter_price(&v, NASH).map_err(|e| e.into())
+}
+
+fn period_secs(tf: Timeframe) -> u64 {
+    match tf { Timeframe::Min1=>60, Timeframe::Min5=>300, Timeframe::Min15=>900, Timeframe::Hour1=>3600, Timeframe::Day1=>86400 }
+}
+fn jitter(base: u64) -> Duration {
+    let j = fastrand::u64(0..=(base/4).max(1));
+    Duration::from_secs(base + j)
+}
+
+async fn fetch_candles(tf: Timeframe) -> Result<Vec<Candle>, Box<dyn std::error::Error + Send + Sync>> {
+    let (period, agg, limit) = tf.api_params();
+    let url = format!("https://api.geckoterminal.com/api/v2/networks/solana/pools/{}/ohlcv/{}?aggregate={}&limit={}&currency=usd", POOL, period, agg, limit);
+    let v: serde_json::Value = reqwest::get(&url).await?.json().await?;
+    parse_geckoterminal(&v).map_err(|e| e.into())
+}
+
+fn merge_fast_price(mut aux: TokenData, fast_px: f64) -> TokenData {
+    if fast_px > 0.0 { aux.price_usd = fast_px; }
+    aux
+}
+
+fn epsilon_greedy_jupiter(roll: f32) -> bool { roll < 0.9 }
 
 fn render_candles(f: &mut Frame, area: ratatui::layout::Rect, candles: &[Candle], tf: Timeframe) {
     if candles.is_empty() {
@@ -277,26 +314,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut term = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     let app = Arc::new(Mutex::new(App::new()));
 
-    // Initial candle fetch
-    let ac = app.clone();
+    // Fast price loop: ε-greedy Jupiter (90%) vs DexScreener (10%), 5s ± jitter
+    let ac_p = app.clone();
     tokio::spawn(async move {
-        // Load candles immediately
-        let tf = ac.lock().await.timeframe;
-        match fetch_candles(tf).await {
-            Ok(c) => { let mut a = ac.lock().await; a.status = format!("{} candles loaded", c.len()); a.candles = c; }
-            Err(e) => { ac.lock().await.status = format!("err: {}", e); }
-        }
-        // Then poll price + candles
         loop {
-            if let Ok(data) = fetch_price().await { ac.lock().await.data = data; }
-            let tf = ac.lock().await.timeframe;
+            let use_jup = epsilon_greedy_jupiter(fastrand::f32());
+            if use_jup {
+                if let Ok(px) = fetch_jupiter_price().await {
+                    let mut a = ac_p.lock().await;
+                    a.data.price_usd = px;
+                    a.status = format!("jup ${:.8}", px);
+                }
+            } else if let Ok(d) = fetch_dexscreener().await {
+                let mut a = ac_p.lock().await;
+                a.data = d;
+                a.status = "dex (probe)".into();
+            }
+            tokio::time::sleep(Duration::from_millis(5000 + fastrand::u64(0..2000))).await;
+        }
+    });
+
+    // Aux loop: DexScreener full payload (MCap/Vol/B/S/Δ) every 30s ± jitter
+    let ac_a = app.clone();
+    tokio::spawn(async move {
+        loop {
+            if let Ok(d) = fetch_dexscreener().await {
+                let mut a = ac_a.lock().await;
+                let px = a.data.price_usd;
+                a.data = merge_fast_price(d, px);
+            }
+            tokio::time::sleep(Duration::from_secs(30 + fastrand::u64(0..10))).await;
+        }
+    });
+
+    // Candle loop: period_secs(tf) ± period/4, reacts to tf change
+    let ac_c = app.clone();
+    tokio::spawn(async move {
+        loop {
+            let tf = ac_c.lock().await.timeframe;
             if let Ok(c) = fetch_candles(tf).await {
-                let mut a = ac.lock().await;
+                let mut a = ac_c.lock().await;
                 a.candles = c;
                 a.tick += 1;
-                a.status = format!("{} candles │ live", a.candles.len());
             }
-            tokio::time::sleep(Duration::from_secs(10)).await;
+            let last_tf = tf;
+            // Sleep in 1s slices so a tf change can short-circuit
+            let total = jitter(period_secs(tf));
+            let mut elapsed = Duration::ZERO;
+            while elapsed < total {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                elapsed += Duration::from_secs(1);
+                if ac_c.lock().await.timeframe != last_tf { break; }
+            }
         }
     });
 
@@ -334,4 +403,168 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     execute!(term.backend_mut(), LeaveAlternateScreen)?;
     term.show_cursor()?;
     Ok(())
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// Boris-style resilient tests.
+//
+// Inspired by ParaLens / counterfactual gating in boris-hedges:
+//  - PURE:    parsing is a total function of bytes → Result; no I/O.
+//  - INV:     domain invariants checked as properties (proptest).
+//  - CFACT:   adversarial JSON (corrupt/missing/extra) must never panic.
+//  - CONS:    "conservation" — merge ops preserve fields they don't own.
+//  - DIST:    randomized strategies satisfy distributional bounds (LLN).
+//
+// Network is never touched. Fixtures are minimal-but-real shapes.
+// ───────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use proptest::prelude::any;
+
+    fn dex_fixture(buys: u64, sells: u64, px: &str) -> serde_json::Value {
+        json!({"pairs":[{
+            "priceUsd": px, "priceNative":"0.0000001",
+            "marketCap": 50000.0, "fdv": 75000.0,
+            "volume":{"h24": 12345.0},
+            "priceChange":{"m5":-1.2,"h1":3.4,"h24":-5.6},
+            "txns":{"h24":{"buys": buys, "sells": sells}},
+            "liquidity":{"usd": 9999.0}
+        }]})
+    }
+    fn jup_fixture(px: &str) -> serde_json::Value {
+        json!({"data":{ NASH: { "price": px } }})
+    }
+    fn gt_fixture(rows: &[(i64,f64,f64,f64,f64,f64)]) -> serde_json::Value {
+        let arr: Vec<serde_json::Value> = rows.iter()
+            .map(|(t,o,h,l,c,v)| json!([t,o,h,l,c,v])).collect();
+        json!({"data":{"attributes":{"ohlcv_list": arr}}})
+    }
+
+    // ── PURE / fixture parsing ─────────────────────────────────────────
+    #[test]
+    fn dex_fixture_parses() {
+        let d = parse_dexscreener(&dex_fixture(10, 7, "0.00001234")).unwrap();
+        assert_eq!(d.buys_24h, 10);
+        assert_eq!(d.sells_24h, 7);
+        assert_eq!(d.txns, 17);                 // INV: txns = buys + sells
+        assert!((d.price_usd - 1.234e-5).abs() < 1e-12);
+    }
+    #[test]
+    fn jup_fixture_parses() {
+        let p = parse_jupiter_price(&jup_fixture("0.00009"), NASH).unwrap();
+        assert!((p - 9e-5).abs() < 1e-12);
+    }
+    #[test]
+    fn gt_fixture_parses_and_reverses() {
+        // GeckoTerminal returns newest-first; parser must reverse to oldest-first.
+        let raw = gt_fixture(&[(300,3.0,3.0,3.0,3.0,1.0),(200,2.0,2.0,2.0,2.0,1.0),(100,1.0,1.0,1.0,1.0,1.0)]);
+        let cs = parse_geckoterminal(&raw).unwrap();
+        assert_eq!(cs.iter().map(|c|c.ts).collect::<Vec<_>>(), vec![100,200,300]);
+    }
+
+    // ── CFACT / adversarial inputs never panic ─────────────────────────
+    #[test] fn dex_empty_pairs_is_err()       { assert!(parse_dexscreener(&json!({"pairs":[]})).is_err()); }
+    #[test] fn dex_missing_pairs_is_err()     { assert!(parse_dexscreener(&json!({})).is_err()); }
+    #[test] fn dex_garbage_price_defaults_zero() {
+        let v = json!({"pairs":[{"priceUsd":"NOT_A_NUMBER","txns":{"h24":{"buys":0,"sells":0}}}]});
+        assert_eq!(parse_dexscreener(&v).unwrap().price_usd, 0.0);
+    }
+    #[test] fn jup_missing_mint_is_err()      { assert!(parse_jupiter_price(&json!({"data":{}}), NASH).is_err()); }
+    #[test] fn jup_numeric_instead_of_str_is_err() {
+        let v = json!({"data":{ NASH: { "price": 0.0001 }}});
+        assert!(parse_jupiter_price(&v, NASH).is_err());
+    }
+    #[test] fn gt_short_row_is_skipped_not_panic() {
+        let v = json!({"data":{"attributes":{"ohlcv_list":[[1,2,3]]}}});
+        assert_eq!(parse_geckoterminal(&v).unwrap().len(), 0);
+    }
+
+    // ── INV / domain invariants via proptest ───────────────────────────
+    proptest::proptest! {
+        #[test]
+        fn prop_dex_txns_conservation(b in 0u64..1_000_000, s in 0u64..1_000_000) {
+            let d = parse_dexscreener(&dex_fixture(b, s, "0.0001")).unwrap();
+            proptest::prop_assert_eq!(d.txns, b + s);          // CONS: B+S=T
+            proptest::prop_assert_eq!(d.buys_24h, b);
+            proptest::prop_assert_eq!(d.sells_24h, s);
+        }
+
+        #[test]
+        fn prop_jitter_within_bounds(base in 4u64..86_400) {
+            let d = jitter(base);
+            let secs = d.as_secs();
+            let upper = base + (base / 4).max(1);
+            proptest::prop_assert!(secs >= base && secs <= upper);   // [base, base+base/4]
+        }
+
+        #[test]
+        fn prop_period_secs_monotonic(_x in 0u8..1) {
+            // Periods strictly increase across the timeframe lattice.
+            let p = [Timeframe::Min1, Timeframe::Min5, Timeframe::Min15, Timeframe::Hour1, Timeframe::Day1]
+                .iter().map(|t| period_secs(*t)).collect::<Vec<_>>();
+            for w in p.windows(2) { proptest::prop_assert!(w[0] < w[1]); }
+        }
+
+        #[test]
+        fn prop_merge_preserves_aux_fields(b in 0u64..1000, s in 0u64..1000, fast in 0.0f64..1.0) {
+            let aux = parse_dexscreener(&dex_fixture(b, s, "0.00001")).unwrap();
+            let snap = aux.clone();
+            let merged = merge_fast_price(aux, fast);
+            // CONS: every non-price field is preserved.
+            proptest::prop_assert_eq!(merged.buys_24h, snap.buys_24h);
+            proptest::prop_assert_eq!(merged.sells_24h, snap.sells_24h);
+            proptest::prop_assert_eq!(merged.txns, snap.txns);
+            proptest::prop_assert_eq!(merged.market_cap.to_bits(), snap.market_cap.to_bits());
+            proptest::prop_assert_eq!(merged.liquidity.to_bits(), snap.liquidity.to_bits());
+            // And the price was overwritten iff fast > 0.
+            if fast > 0.0 { proptest::prop_assert_eq!(merged.price_usd, fast); }
+            else          { proptest::prop_assert_eq!(merged.price_usd.to_bits(), snap.price_usd.to_bits()); }
+        }
+
+        #[test]
+        fn prop_candle_invariants_after_parse(
+            n in 1usize..50,
+            seed in any::<u64>(),
+        ) {
+            // Generate plausible OHLCV rows newest-first, parser will reverse.
+            let mut rng = fastrand::Rng::with_seed(seed);
+            let mut rows = Vec::new();
+            for i in 0..n {
+                let o = 0.00001 + rng.f64() * 0.0001;
+                let c = 0.00001 + rng.f64() * 0.0001;
+                let h = o.max(c) + rng.f64() * 0.00001;
+                let l = o.min(c) - rng.f64() * 0.00001;
+                rows.push(((1000 - i as i64) * 60, o, h, l, c, rng.f64() * 1000.0));
+            }
+            let cs = parse_geckoterminal(&gt_fixture(&rows)).unwrap();
+            // INV: ts strictly increasing after reverse; h≥max(o,c); l≤min(o,c).
+            for w in cs.windows(2) { proptest::prop_assert!(w[0].ts < w[1].ts); }
+            for c in &cs {
+                proptest::prop_assert!(c.h >= c.o.max(c.c) - 1e-15);
+                proptest::prop_assert!(c.l <= c.o.min(c.c) + 1e-15);
+            }
+        }
+    }
+
+    // ── DIST / randomized strategy satisfies LLN bound ─────────────────
+    #[test]
+    fn epsilon_greedy_picks_jupiter_about_90pct() {
+        // 10_000 trials; with ε=0.1 the empirical mean ∈ [0.88, 0.92] easily.
+        let n = 10_000;
+        let hits = (0..n).filter(|_| epsilon_greedy_jupiter(fastrand::f32())).count();
+        let p = hits as f64 / n as f64;
+        assert!(p > 0.88 && p < 0.92, "p={}", p);
+    }
+
+    // ── COUNTERFACTUAL on the ε threshold: monotonic in roll ───────────
+    #[test]
+    fn epsilon_greedy_is_threshold() {
+        // ParaLens-style: gate is a pure step at 0.9.
+        assert!(epsilon_greedy_jupiter(0.0));
+        assert!(epsilon_greedy_jupiter(0.899));
+        assert!(!epsilon_greedy_jupiter(0.9));
+        assert!(!epsilon_greedy_jupiter(0.999));
+    }
 }
