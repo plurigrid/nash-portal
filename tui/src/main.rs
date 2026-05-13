@@ -16,8 +16,18 @@ use ratatui::{
 use std::{io, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
-const NASH: &str = "4DQsMSkeKc3Mcij1BE4Z8oqU3QeV45QQ3Psn3CNDpump";
-const POOL: &str = "FwuB9juwaoo35C2Nx6XMVn3sQ6B9HeXuuquR7rB21y3Y";
+// proper names → SplitMix64(seed = 1069) → HSL(s=0.75, l=0.55) → RGB.
+const X_E23C36: Color = Color::Rgb(226,  60,  54); // ◆  formerly NASH
+const X_36E2A3: Color = Color::Rgb( 54, 226, 163); // ◇  formerly SOL / POOL
+const X_E23653: Color = Color::Rgb(226,  54,  83); // ✦  formerly pump.fun
+const X_E23667: Color = Color::Rgb(226,  54, 103); // ⬢  formerly GeckoTerminal
+const X_E25936: Color = Color::Rgb(226,  89,  54); // ⬡  formerly Plurigrid
+const X_E27B36: Color = Color::Rgb(226, 123,  54); // ◈  formerly NASH Portal / TUI
+const X_AC36E2: Color = Color::Rgb(172,  54, 226); // ✧  formerly Jupiter
+const X_C836E2: Color = Color::Rgb(200,  54, 226); // ✿  formerly DexScreener
+
+const X_E23C36_ADDR: &str = "4DQsMSkeKc3Mcij1BE4Z8oqU3QeV45QQ3Psn3CNDpump";
+const X_36E2A3_ADDR: &str = "FwuB9juwaoo35C2Nx6XMVn3sQ6B9HeXuuquR7rB21y3Y";
 
 #[derive(Default, Clone)]
 struct TokenData {
@@ -67,7 +77,7 @@ impl App {
     fn ticker_text(&self) -> String {
         let d = &self.data;
         let a = |v: f64| if v > 0.0 {"▲"} else if v < 0.0 {"▼"} else {"─"};
-        format!("    NASH ${:.8}  {}5m {:+.1}%  {}1h {:+.1}%  {}24h {:+.1}%  │  MCap ${:.0}K  Vol ${:.0}K  │  B:{} S:{}  │  {:.6} SOL  ◆  pump.fun    ",
+        format!("    ◆ ${:.8}  {}5m {:+.1}%  {}1h {:+.1}%  {}24h {:+.1}%  │  MCap ${:.0}K  Vol ${:.0}K  │  B:{} S:{}  │  {:.6} ◇  ✦    ",
             d.price_usd, a(d.change_5m), d.change_5m, a(d.change_1h), d.change_1h,
             a(d.change_24h), d.change_24h, d.market_cap/1000.0, d.volume_24h/1000.0,
             d.buys_24h, d.sells_24h, d.price_sol)
@@ -115,13 +125,13 @@ fn parse_geckoterminal(v: &serde_json::Value) -> Result<Vec<Candle>, &'static st
 }
 
 async fn fetch_dexscreener() -> Result<TokenData, Box<dyn std::error::Error + Send + Sync>> {
-    let v: serde_json::Value = reqwest::get(&format!("https://api.dexscreener.com/latest/dex/tokens/{}", NASH)).await?.json().await?;
+    let v: serde_json::Value = reqwest::get(&format!("https://api.dexscreener.com/latest/dex/tokens/{}", X_E23C36_ADDR)).await?.json().await?;
     parse_dexscreener(&v).map_err(|e| e.into())
 }
 
 async fn fetch_jupiter_price() -> Result<f64, Box<dyn std::error::Error + Send + Sync>> {
-    let v: serde_json::Value = reqwest::get(&format!("https://api.jup.ag/price/v2?ids={}", NASH)).await?.json().await?;
-    parse_jupiter_price(&v, NASH).map_err(|e| e.into())
+    let v: serde_json::Value = reqwest::get(&format!("https://api.jup.ag/price/v2?ids={}", X_E23C36_ADDR)).await?.json().await?;
+    parse_jupiter_price(&v, X_E23C36_ADDR).map_err(|e| e.into())
 }
 
 fn period_secs(tf: Timeframe) -> u64 {
@@ -134,7 +144,7 @@ fn jitter(base: u64) -> Duration {
 
 async fn fetch_candles(tf: Timeframe) -> Result<Vec<Candle>, Box<dyn std::error::Error + Send + Sync>> {
     let (period, agg, limit) = tf.api_params();
-    let url = format!("https://api.geckoterminal.com/api/v2/networks/solana/pools/{}/ohlcv/{}?aggregate={}&limit={}&currency=usd", POOL, period, agg, limit);
+    let url = format!("https://api.geckoterminal.com/api/v2/networks/solana/pools/{}/ohlcv/{}?aggregate={}&limit={}&currency=usd", X_36E2A3_ADDR, period, agg, limit);
     let v: serde_json::Value = reqwest::get(&url).await?.json().await?;
     parse_geckoterminal(&v).map_err(|e| e.into())
 }
@@ -148,7 +158,12 @@ fn epsilon_greedy_jupiter(roll: f32) -> bool { roll < 0.9 }
 
 fn render_candles(f: &mut Frame, area: ratatui::layout::Rect, candles: &[Candle], tf: Timeframe) {
     if candles.is_empty() {
-        f.render_widget(Paragraph::new("  Loading candles from GeckoTerminal...")
+        let loading = Line::from(vec![
+            Span::raw("  Loading candles from "),
+            Span::styled("⬢", Style::default().fg(X_E23667).add_modifier(Modifier::BOLD)),
+            Span::raw("..."),
+        ]);
+        f.render_widget(Paragraph::new(loading)
             .block(Block::default().borders(Borders::ALL).title(" Candles ")), area);
         return;
     }
@@ -256,10 +271,14 @@ fn draw(f: &mut Frame, app: &App) {
     // Price
     let pc = if app.data.change_5m > 0.0 {Color::Green} else if app.data.change_5m < 0.0 {Color::Red} else {Color::White};
     f.render_widget(Paragraph::new(Line::from(vec![
-        Span::styled(" NASH ", Style::default().fg(Color::White).bg(Color::Magenta).add_modifier(Modifier::BOLD)),
+        Span::styled(" ◆ ", Style::default().fg(Color::Black).bg(X_E23C36).add_modifier(Modifier::BOLD)),
         Span::styled(format!("  ${:.8}", app.data.price_usd), Style::default().fg(pc).add_modifier(Modifier::BOLD)),
-        Span::styled(format!("  {:.6} SOL", app.data.price_sol), Style::default().fg(Color::Cyan)),
-        Span::styled(format!("  MCap ${:.0}K  FDV ${:.0}K", app.data.market_cap/1000.0, app.data.fdv/1000.0), Style::default().fg(Color::Yellow)),
+        Span::raw("  "),
+        Span::styled(format!("{:.6}", app.data.price_sol), Style::default().fg(X_36E2A3)),
+        Span::raw(" "),
+        Span::styled("◇", Style::default().fg(X_36E2A3).add_modifier(Modifier::BOLD)),
+        Span::styled(format!("  MCap ${:.0}K  FDV ${:.0}K  ", app.data.market_cap/1000.0, app.data.fdv/1000.0), Style::default().fg(Color::Yellow)),
+        Span::styled("✦", Style::default().fg(X_E23653).add_modifier(Modifier::BOLD)),
         Span::styled(format!("  │ {}", app.status), Style::default().fg(Color::DarkGray)),
     ])).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::DarkGray))), outer[1]);
 
@@ -303,7 +322,12 @@ fn draw(f: &mut Frame, app: &App) {
         Span::styled(" q", Style::default().fg(Color::Yellow)), Span::raw(":quit "),
         Span::styled("t", Style::default().fg(Color::Yellow)), Span::raw(":timeframe "),
         Span::styled("r", Style::default().fg(Color::Yellow)), Span::raw(":refresh "),
-        Span::raw(format!(" │ [{}] │ tick {} │ GeckoTerminal OHLCV", app.timeframe.label(), app.tick)),
+        Span::raw(format!(" │ [{}] │ tick {} │ ", app.timeframe.label(), app.tick)),
+        Span::styled("⬢", Style::default().fg(X_E23667).add_modifier(Modifier::BOLD)),
+        Span::raw(" OHLCV │ "),
+        Span::styled("⬡", Style::default().fg(X_E25936).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled("◈", Style::default().fg(X_E27B36).add_modifier(Modifier::BOLD)),
     ])).style(Style::default().fg(Color::DarkGray)), outer[5]);
 }
 
@@ -323,12 +347,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Ok(px) = fetch_jupiter_price().await {
                     let mut a = ac_p.lock().await;
                     a.data.price_usd = px;
-                    a.status = format!("jup ${:.8}", px);
+                    a.status = format!("✧ ${:.8}", px);
                 }
             } else if let Ok(d) = fetch_dexscreener().await {
                 let mut a = ac_p.lock().await;
                 a.data = d;
-                a.status = "dex (probe)".into();
+                a.status = "✿ (probe)".into();
             }
             tokio::time::sleep(Duration::from_millis(5000 + fastrand::u64(0..2000))).await;
         }
@@ -434,7 +458,7 @@ mod tests {
         }]})
     }
     fn jup_fixture(px: &str) -> serde_json::Value {
-        json!({"data":{ NASH: { "price": px } }})
+        json!({"data":{ X_E23C36_ADDR: { "price": px } }})
     }
     fn gt_fixture(rows: &[(i64,f64,f64,f64,f64,f64)]) -> serde_json::Value {
         let arr: Vec<serde_json::Value> = rows.iter()
@@ -453,7 +477,7 @@ mod tests {
     }
     #[test]
     fn jup_fixture_parses() {
-        let p = parse_jupiter_price(&jup_fixture("0.00009"), NASH).unwrap();
+        let p = parse_jupiter_price(&jup_fixture("0.00009"), X_E23C36_ADDR).unwrap();
         assert!((p - 9e-5).abs() < 1e-12);
     }
     #[test]
@@ -471,10 +495,10 @@ mod tests {
         let v = json!({"pairs":[{"priceUsd":"NOT_A_NUMBER","txns":{"h24":{"buys":0,"sells":0}}}]});
         assert_eq!(parse_dexscreener(&v).unwrap().price_usd, 0.0);
     }
-    #[test] fn jup_missing_mint_is_err()      { assert!(parse_jupiter_price(&json!({"data":{}}), NASH).is_err()); }
+    #[test] fn jup_missing_mint_is_err()      { assert!(parse_jupiter_price(&json!({"data":{}}), X_E23C36_ADDR).is_err()); }
     #[test] fn jup_numeric_instead_of_str_is_err() {
-        let v = json!({"data":{ NASH: { "price": 0.0001 }}});
-        assert!(parse_jupiter_price(&v, NASH).is_err());
+        let v = json!({"data":{ X_E23C36_ADDR: { "price": 0.0001 }}});
+        assert!(parse_jupiter_price(&v, X_E23C36_ADDR).is_err());
     }
     #[test] fn gt_short_row_is_skipped_not_panic() {
         let v = json!({"data":{"attributes":{"ohlcv_list":[[1,2,3]]}}});
