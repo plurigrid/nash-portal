@@ -12,8 +12,19 @@ use ratzilla::ratatui::{
 use ratzilla::{event::KeyCode, DomBackend, WebRenderer};
 use wasm_bindgen_futures::spawn_local;
 
-const NASH: &str = "4DQsMSkeKc3Mcij1BE4Z8oqU3QeV45QQ3Psn3CNDpump";
-const POOL: &str = "FwuB9juwaoo35C2Nx6XMVn3sQ6B9HeXuuquR7rB21y3Y";
+// proper names → SplitMix64(seed = 1069) → HSL(s=0.75, l=0.55) → RGB.
+// Each color is the deterministic image of the name it replaces.
+const X_E23C36: Color = Color::Rgb(226,  60,  54); // ◆  formerly NASH
+const X_36E2A3: Color = Color::Rgb( 54, 226, 163); // ◇  formerly SOL / POOL
+const X_E23653: Color = Color::Rgb(226,  54,  83); // ✦  formerly pump.fun
+const X_E23667: Color = Color::Rgb(226,  54, 103); // ⬢  formerly GeckoTerminal
+const X_E25936: Color = Color::Rgb(226,  89,  54); // ⬡  formerly Plurigrid
+const X_E27B36: Color = Color::Rgb(226, 123,  54); // ◈  formerly NASH Portal
+const X_AC36E2: Color = Color::Rgb(172,  54, 226); // ✧  formerly Jupiter
+const X_C836E2: Color = Color::Rgb(200,  54, 226); // ✿  formerly DexScreener
+
+const X_E23C36_ADDR: &str = "4DQsMSkeKc3Mcij1BE4Z8oqU3QeV45QQ3Psn3CNDpump";
+const X_36E2A3_ADDR: &str = "FwuB9juwaoo35C2Nx6XMVn3sQ6B9HeXuuquR7rB21y3Y";
 
 #[derive(Default, Clone)]
 struct TokenData {
@@ -113,7 +124,7 @@ impl App {
             }
         };
         format!(
-            "    NASH ${:.8}  {}5m {:+.1}%  {}1h {:+.1}%  {}24h {:+.1}%  │  MCap ${:.0}K  Vol ${:.0}K  │  B:{} S:{}  │  {:.6} SOL  ◆  pump.fun    ",
+            "    ◆ ${:.8}  {}5m {:+.1}%  {}1h {:+.1}%  {}24h {:+.1}%  │  MCap ${:.0}K  Vol ${:.0}K  │  B:{} S:{}  │  {:.6} ◇  ✦    ",
             d.price_usd,
             arrow(d.change_5m),
             d.change_5m,
@@ -185,17 +196,17 @@ fn parse_geckoterminal(v: &serde_json::Value) -> Result<Vec<Candle>, &'static st
 }
 
 async fn fetch_dexscreener() -> Option<TokenData> {
-    let url = format!("https://api.dexscreener.com/latest/dex/tokens/{}", NASH);
+    let url = format!("https://api.dexscreener.com/latest/dex/tokens/{}", X_E23C36_ADDR);
     let resp = gloo_net::http::Request::get(&url).send().await.ok()?;
     let v: serde_json::Value = resp.json().await.ok()?;
     parse_dexscreener(&v).ok()
 }
 
 async fn fetch_jupiter_price() -> Option<f64> {
-    let url = format!("https://api.jup.ag/price/v2?ids={}", NASH);
+    let url = format!("https://api.jup.ag/price/v2?ids={}", X_E23C36_ADDR);
     let resp = gloo_net::http::Request::get(&url).send().await.ok()?;
     let v: serde_json::Value = resp.json().await.ok()?;
-    parse_jupiter_price(&v, NASH).ok()
+    parse_jupiter_price(&v, X_E23C36_ADDR).ok()
 }
 
 fn period_millis(tf: Timeframe) -> u32 {
@@ -225,7 +236,7 @@ async fn fetch_candles(tf: Timeframe) -> Option<Vec<Candle>> {
     let (period, agg, limit) = tf.api_params();
     let url = format!(
         "https://api.geckoterminal.com/api/v2/networks/solana/pools/{}/ohlcv/{}?aggregate={}&limit={}&currency=usd",
-        POOL, period, agg, limit
+        X_36E2A3_ADDR, period, agg, limit
     );
     let resp = gloo_net::http::Request::get(&url).send().await.ok()?;
     let v: serde_json::Value = resp.json().await.ok()?;
@@ -269,12 +280,12 @@ fn spawn_fast_price_loop(state: &Rc<RefCell<App>>) {
                 if let Some(px) = fetch_jupiter_price().await {
                     let mut app = state.borrow_mut();
                     app.data.price_usd = px;
-                    app.status = format!("jup ${:.8}", px);
+                    app.status = format!("✧ ${:.8}", px);
                 }
             } else if let Some(data) = fetch_dexscreener().await {
                 let mut app = state.borrow_mut();
                 app.data = data;
-                app.status = "dex (probe)".into();
+                app.status = "✿ (probe)".into();
             }
 
             TimeoutFuture::new(5_000 + random_millis(2_001)).await;
@@ -324,8 +335,13 @@ fn spawn_candle_loop(state: &Rc<RefCell<App>>) {
 
 fn render_candles(f: &mut Frame, area: Rect, candles: &[Candle], tf: Timeframe) {
     if candles.is_empty() {
+        let loading = Line::from(vec![
+            Span::raw("  Loading candles from "),
+            Span::styled("⬢", Style::default().fg(X_E23667).add_modifier(Modifier::BOLD)),
+            Span::raw("..."),
+        ]);
         f.render_widget(
-            Paragraph::new("  Loading candles from GeckoTerminal...")
+            Paragraph::new(loading)
                 .block(Block::default().borders(Borders::ALL).title(" Candles ")),
             area,
         );
@@ -500,28 +516,29 @@ fn draw(f: &mut Frame, app: &App) {
     f.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
-                " NASH ",
+                " ◆ ",
                 Style::default()
-                    .fg(Color::White)
-                    .bg(Color::Magenta)
+                    .fg(Color::Black)
+                    .bg(X_E23C36)
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 format!("  ${:.8}", d.price_usd),
                 Style::default().fg(pc).add_modifier(Modifier::BOLD),
             ),
-            Span::styled(
-                format!("  {:.6} SOL", d.price_sol),
-                Style::default().fg(Color::Cyan),
-            ),
+            Span::raw("  "),
+            Span::styled(format!("{:.6}", d.price_sol), Style::default().fg(X_36E2A3)),
+            Span::raw(" "),
+            Span::styled("◇", Style::default().fg(X_36E2A3).add_modifier(Modifier::BOLD)),
             Span::styled(
                 format!(
-                    "  MCap ${:.0}K  FDV ${:.0}K",
+                    "  MCap ${:.0}K  FDV ${:.0}K  ",
                     d.market_cap / 1000.0,
                     d.fdv / 1000.0
                 ),
                 Style::default().fg(Color::Yellow),
             ),
+            Span::styled("✦", Style::default().fg(X_E23653).add_modifier(Modifier::BOLD)),
             Span::styled(
                 format!("  │ {}", app.status),
                 Style::default().fg(Color::DarkGray),
@@ -649,11 +666,16 @@ fn draw(f: &mut Frame, app: &App) {
             Span::raw(":timeframe "),
             Span::styled("r", Style::default().fg(Color::Yellow)),
             Span::raw(":refresh "),
-            Span::raw(format!(
-                " │ [{}] │ tick {} │ GeckoTerminal OHLCV + Jupiter probe",
-                app.timeframe.label(),
-                app.tick
-            )),
+            Span::raw(format!(" │ [{}] │ tick {} │ ", app.timeframe.label(), app.tick)),
+            Span::styled("⬢", Style::default().fg(X_E23667).add_modifier(Modifier::BOLD)),
+            Span::raw(" OHLCV + "),
+            Span::styled("✧", Style::default().fg(X_AC36E2).add_modifier(Modifier::BOLD)),
+            Span::raw(" probe │ "),
+            Span::styled("✿", Style::default().fg(X_C836E2).add_modifier(Modifier::BOLD)),
+            Span::raw(" "),
+            Span::styled("⬡", Style::default().fg(X_E25936).add_modifier(Modifier::BOLD)),
+            Span::raw(" "),
+            Span::styled("◈", Style::default().fg(X_E27B36).add_modifier(Modifier::BOLD)),
         ]))
         .style(Style::default().fg(Color::DarkGray)),
         outer[5],
